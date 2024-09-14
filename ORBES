@@ -1,0 +1,77 @@
+import pandas as pd
+import openpyxl
+
+# Função para categorizar os gastos
+def categorizar_gastos(descricao):
+    descricao = descricao.lower()
+    
+    if any(keyword in descricao for keyword in ['luz', 'água', 'aluguel', 'condomínio', 'internet']):
+        return 'Casa'
+    elif any(keyword in descricao for keyword in ['viagem', 'passagem', 'hotel']):
+        return 'Viagens'
+    elif any(keyword in descricao for keyword in ['mercado', 'supermercado', 'compras']):
+        return 'Mercado'
+    elif any(keyword in descricao for keyword in ['escola', 'educação', 'material escolar']):
+        return 'Escola'
+    else:
+        return 'Outros'
+
+# Função para processar o extrato bancário
+def processar_extrato(arquivo):
+    # Leitura do arquivo CSV
+    df = pd.read_csv(arquivo)
+    
+    # Ajuste das colunas - Supondo que as colunas do CSV sejam 'Data', 'Descrição', 'Valor', 'Tipo'
+    # A coluna 'Tipo' deve conter 'Receita' ou 'Despesa'
+    df['Data'] = pd.to_datetime(df['Data'], dayfirst=True)
+    
+    # Categorizar os gastos
+    df['Categoria'] = df.apply(lambda row: categorizar_gastos(row['Descrição']) if row['Tipo'] == 'Despesa' else 'Receita', axis=1)
+    
+    # Adicionar uma coluna 'Mês' para agrupar as transações por mês
+    df['Mês'] = df['Data'].dt.to_period('M')
+    
+    # Resumo de receitas e despesas por mês e por categoria
+    resumo_mensal = df.groupby(['Mês', 'Categoria'])['Valor'].sum().reset_index()
+
+    # Calcular o saldo mensal
+    saldo_mensal = resumo_mensal.pivot_table(index='Mês', columns='Categoria', values='Valor', fill_value=0)
+    saldo_mensal['Saldo'] = saldo_mensal.get('Receita', 0) - saldo_mensal.drop(columns='Receita').sum(axis=1)
+    
+    return df, resumo_mensal, saldo_mensal
+
+# Função para salvar os dados em uma planilha Excel
+def salvar_planilha(df, resumo_mensal, saldo_mensal, arquivo_saida):
+    with pd.ExcelWriter(arquivo_saida, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name='Extrato Completo', index=False)
+        resumo_mensal.to_excel(writer, sheet_name='Resumo Mensal', index=False)
+        saldo_mensal.to_excel(writer, sheet_name='Saldo Mensal')
+    print(f"Planilha criada: {arquivo_saida}")
+
+# Função para criar recomendações de economia
+def criar_recomendacao(saldo_mensal, percentual_economia=0.1):
+    recomendacoes = {}
+    
+    for mes in saldo_mensal.index:
+        saldo = saldo_mensal.loc[mes, 'Saldo']
+        if saldo < 0:
+            recomendacoes[mes] = f"Tente reduzir suas despesas em {abs(saldo) * percentual_economia:.2f} para economizar mais."
+        else:
+            recomendacoes[mes] = f"Seu saldo está positivo. Considere economizar {saldo * percentual_economia:.2f} para futuras emergências."
+    
+    return recomendacoes
+
+# Função principal para criar a planilha de gastos e a recomendação de economia
+def criar_planilha_gastos(arquivo_extrato, arquivo_saida, percentual_economia=0.1):
+    df, resumo_mensal, saldo_mensal = processar_extrato(arquivo_extrato)
+    salvar_planilha(df, resumo_mensal, saldo_mensal, arquivo_saida)
+    
+    recomendacoes = criar_recomendacao(saldo_mensal, percentual_economia)
+    for mes, rec in recomendacoes.items():
+        print(f"{mes}: {rec}")
+
+# Exemplo de uso
+arquivo_extrato = 'extrato_banco.csv'  # Substitua pelo nome do seu arquivo de extrato
+arquivo_saida = 'planilha_gastos_e_economia.xlsx'  # Nome da planilha de saída
+
+criar_planilha_gastos(arquivo_extrato, arquivo_saida)
